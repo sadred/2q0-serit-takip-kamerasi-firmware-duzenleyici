@@ -50,6 +50,8 @@ Depoda `motor/` bulunduğu için ek indirme gerekmez.
 
 > `motor/` klasörü sürüm yükseltmek istersen Schutz-Kaput deposundan elle güncellenebilir:
 > https://github.com/perkthefox/mqb-kshutz-kaput (program bunu kendisi indirmez).
+> Motorun bu proje için alınmış fork'u: https://github.com/sadred/mqb-kshutz-kaput
+> (`gh repo sync sadred/mqb-kshutz-kaput` ile güncellenir, sonra `motor/` içine kopyalanır).
 
 ## Kullanım
 
