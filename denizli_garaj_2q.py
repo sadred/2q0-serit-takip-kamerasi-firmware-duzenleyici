@@ -34,7 +34,7 @@ from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
                 "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
@@ -302,26 +302,14 @@ class Builder(ttk.Frame):
         if logo_png.is_file():
             try:
                 self._logo = tk.PhotoImage(file=str(logo_png))
-                ttk.Label(head, image=self._logo).grid(row=0, column=0, rowspan=3, sticky="w", padx=(0, 10))
+                ttk.Label(head, image=self._logo).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
             except tk.TclError:
                 self._logo = None
         ttk.Label(head, text=APP_TITLE, font=("Segoe UI", 13, "bold"), foreground="#3f5c3f").grid(
             row=0, column=1, sticky="w")
         ttk.Label(head, text=APP_SUBTITLE, foreground="#6b6b6b").grid(row=1, column=1, sticky="w")
-        if engine_target() is not None:
-            kind = "gömülü" if engine_source() == ENGINE_BUNDLED else "harici"
-            tool_txt = f"yama motoru: {kind} · Schutz-Kaput (PerkTheFox) — dış .py gerekmez"
-            ok_color = True
-        elif self.tool:
-            tool_txt = f"yama motoru: CLI ({self.tool.name}) · Schutz-Kaput (PerkTheFox)"
-            ok_color = True
-        else:
-            tool_txt = "yama motoru: BULUNAMADI"
-            ok_color = False
-        ttk.Label(head, text=tool_txt, foreground="#1f8f3d" if ok_color else "#b3261e").grid(
-            row=2, column=1, sticky="w", pady=(2, 0))
         ttk.Button(head, text="Hakkında / Kaynak", command=self._about).grid(
-            row=0, column=2, rowspan=3, sticky="e")
+            row=0, column=2, rowspan=2, sticky="e")
 
         # --- girdi ---
         src = ttk.LabelFrame(self, text=" 1 · Girdi (ham firmware) ", padding=8)
