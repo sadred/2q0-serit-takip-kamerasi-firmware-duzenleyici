@@ -23,7 +23,9 @@ Türkçe arayüz ve raporlama bu projeye aittir.
 
 ## Kurulum
 
-**Hazır exe:** `dist/DenizliGaraj-2Q-Kamera-Duzenleyici.exe` (tek dosya, Python gerekmez).
+**Hazır exe (önerilen):** `dist/2Q0-SeritTakip-Kamera-Firmware-Duzenleyici.exe`
+— **tek dosya**, Python gerekmez, **yama motoru exe'nin içinde gömülü** (dış `.py` gerekmez).
+Kod imzalı (self-signed): sertifika `assets/denizli-garaj-kod-imza.cer`.
 
 **Kaynaktan:**
 
@@ -32,14 +34,17 @@ python denizli_garaj_2q.py      # Python 3.9+, tkinter, harici paket yok
 DenizliGaraj-2Q.bat             # çift tıkla
 ```
 
-### Yama motorunu tanıtma
+### Komut satırı (toplu derleme)
 
-`ks_patcher.py` şu konumlardan birinde olmalı (ilk bulunan kullanılır):
+```bash
+2Q0-SeritTakip-Kamera-Firmware-Duzenleyici.exe --out C:\cikti --kdtc org\FL_*.frf
+# seçenekler: --no-fec · --kdtc · --xcp · --bin
+```
 
-1. exe'nin / script'in yanındaki `ks_patcher.py` veya `mqb-kshutz-kaput/`, `motor/` klasörü
-2. `Documents/tools/mqb-kshutz-kaput`
-3. `Downloads/mqb-kshutz-kaput`, `Desktop/mqb-kshutz-kaput`
+### Yama motoru (geliştirici modu)
 
+exe gömülü motorla gelir. Kaynaktan (`python denizli_garaj_2q.py`) çalıştırırken motor şu
+sırayla aranır: `motor/` (paket içi) → `ks_patcher.py` yanındaki klasör → `Documents/tools/mqb-kshutz-kaput`.
 Yoksa:
 
 ```bash
@@ -83,9 +88,26 @@ Sonrasında optik kalibrasyon (`VAS 6430`) ve araç tarafı kodlama (gateway `0x
 python -m venv .build-venv
 .build-venv/Scripts/python -m pip install pyinstaller
 .build-venv/Scripts/python -m PyInstaller --noconfirm --onefile --windowed ^
-  --icon assets/logo.ico --add-data "assets;assets" ^
-  --name DenizliGaraj-2Q-Kamera-Duzenleyici denizli_garaj_2q.py
+  --icon assets/logo.ico --add-data "assets;assets" --add-data "motor;motor" ^
+  --hidden-import xml.etree.ElementTree --hidden-import xml --hidden-import select ^
+  --hidden-import signal --hidden-import unicodedata --hidden-import base64 ^
+  --hidden-import tarfile --hidden-import datetime ^
+  --name 2Q0-SeritTakip-Kamera-Firmware-Duzenleyici denizli_garaj_2q.py
 ```
+
+`motor/` klasörü Schutz-Kaput'un yamasız kopyasıdır (kendi `LICENSE.md`/`README.md` dosyalarıyla
+birlikte gelir) — exe'nin içine gömülür, böylece dış `.py` dosyası gerekmez.
+
+## Kod imzası
+
+exe, **Denizli Garaj** adına üretilmiş **self-signed** kod imzalama sertifikasıyla imzalanmıştır
+(SHA-256, zaman damgalı). Bu makinede sertifika `Trusted Root` + `Trusted Publisher` depolarına
+kurulduğu için Windows açılışta uyarı vermez.
+
+Başka bir bilgisayarda uyarı çıkmaması için `assets/denizli-garaj-kod-imza.cer` dosyasını
+**Güvenilen Kök Sertifika Yetkilileri** ve **Güvenilen Yayımcılar** depolarına ekleyin
+(çift tık → Sertifika Yükle → «Sertifikayı şu depoya yerleştir»). Alternatif: CA'dan
+(OV/EV) alınmış gerçek bir kod imzalama sertifikası kullanmak — SmartScreen itibarı için tek yol budur.
 
 ## Firmware hakkında
 

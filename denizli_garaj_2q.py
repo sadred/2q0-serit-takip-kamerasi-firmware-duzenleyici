@@ -34,7 +34,7 @@ from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
                 "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
@@ -122,6 +122,122 @@ def run_tool(tool: Path, args: list[str], timeout: int = 900) -> subprocess.Comp
 
 
 # ==========================================================================
+# Gömülü yama motoru (Schutz-Kaput) — ayrı süreç/ayrı .py dosyası gerekmez
+# ==========================================================================
+ENGINE_BUNDLED = ASSET_DIR.parent / "motor"      # PyInstaller: _MEIPASS/motor
+_ENGINE = None
+_PATCH_OPTIONS = None
+_ENGINE_ERROR = ""
+
+
+def engine_source() -> Path | None:
+    """Gömülü motor varsa onu, yoksa harici ks_patcher.py klasörünü döndür."""
+    if (ENGINE_BUNDLED / "__init__.py").is_file():
+        return ENGINE_BUNDLED
+    tool = resolve_tool()
+    if tool is not None and (tool.parent / "__init__.py").is_file():
+        return tool.parent
+    return None
+
+
+def stage_engine(src: Path) -> Path:
+    """Motoru import edilebilir `motor` paketi olarak hazırla; paket ÜST klasörünü döndür."""
+    if src.name == "motor":
+        return src.parent
+    stage = APP_DIR / ".motor_paket" / "motor"
+    stage.parent.mkdir(parents=True, exist_ok=True)
+    for item in ("__init__.py", "core", "targets", "tui", "ks_patcher.py"):
+        s, d = src / item, stage / item
+        if s.is_dir():
+            shutil.copytree(s, d, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        elif s.is_file():
+            shutil.copy2(s, d)
+    return stage.parent
+
+
+def get_engine():
+    global _ENGINE, _PATCH_OPTIONS, _ENGINE_ERROR
+    if _ENGINE is not None:
+        return _ENGINE
+    src = engine_source()
+    if src is None:
+        _ENGINE_ERROR = f"motor kaynağı yok (aranan: {ENGINE_BUNDLED})"
+        return None
+    try:
+        parent = stage_engine(src)
+        if str(parent) not in sys.path:
+            sys.path.insert(0, str(parent))
+        import importlib
+        targets_mod = importlib.import_module("motor.targets")
+        base_mod = importlib.import_module("motor.core.target_base")
+    except Exception:  # noqa: BLE001
+        import traceback
+        _ENGINE_ERROR = traceback.format_exc(limit=3)
+        return None
+    _PATCH_OPTIONS = base_mod.PatchOptions
+    _ENGINE = targets_mod
+    _ENGINE_ERROR = ""
+    return _ENGINE
+
+
+def engine_target():
+    global _ENGINE_ERROR
+    eng = get_engine()
+    if eng is None:
+        return None
+    try:
+        return eng.get_target(TARGET_ID)
+    except Exception:  # noqa: BLE001
+        import traceback
+        _ENGINE_ERROR = "get_target: " + traceback.format_exc(limit=3)
+        return None
+
+
+def inspect_path(path: Path) -> dict | None:
+    """Konteyner/dump incele. Motor varsa doğrudan, yoksa CLI üzerinden."""
+    tgt = engine_target()
+    if tgt is not None:
+        try:
+            i = tgt.inspect_file(path)
+        except Exception:  # noqa: BLE001
+            return None
+        return {"ks_state": i.ks_state, "fec_state": i.fec_state,
+                "key_dtc_state": i.key_dtc_state, "xcp_state": i.xcp_state,
+                "crc32_trimmed": i.crc32_trimmed, "format_label": i.format_label}
+    tool = resolve_tool()
+    if tool is None:
+        return None
+    try:
+        r = run_tool(tool, ["-l", "en", "-t", TARGET_ID, "inspect", str(path), "--json"])
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return parse_json(r.stdout)
+
+
+def patch_with_engine(src: Path, dest: Path, *, fec: bool, kdtc: bool, xcp: bool,
+                      odx: bool) -> tuple[bool, str]:
+    """Yamayı gömülü/harici motorla, ayrı süreç açmadan çalıştır."""
+    tgt = engine_target()
+    if tgt is None or _PATCH_OPTIONS is None:
+        return False, "motor yüklenemedi"
+    opts = _PATCH_OPTIONS(
+        activate_all_fecs=fec,
+        suppress_key_dtcs=kdtc,
+        enable_xcp_can0=xcp,
+        build_odx_dir=dest if odx else None,
+        output_bin=None if odx else (dest / f"{src.stem}_KS.bin"),
+    )
+    try:
+        res = tgt.patch_file(src, opts)
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)[:300]
+    if getattr(res.after, "ks_state", "") != "patched":
+        return False, f"yama sonrası CP durumu: {getattr(res.after, 'ks_state', '?')}"
+    return True, "ok"
+
+
+# ==========================================================================
 # Arayüz
 # ==========================================================================
 class Builder(ttk.Frame):
@@ -190,9 +306,17 @@ class Builder(ttk.Frame):
         ttk.Label(head, text=APP_TITLE, font=("Segoe UI", 13, "bold"), foreground="#3f5c3f").grid(
             row=0, column=1, sticky="w")
         ttk.Label(head, text=APP_SUBTITLE, foreground="#6b6b6b").grid(row=1, column=1, sticky="w")
-        tool_txt = (f"motor: {self.tool.name} · kaynak: Schutz-Kaput (PerkTheFox)"
-                    if self.tool else "motor: BULUNAMADI — ks_patcher.py gerekli")
-        ttk.Label(head, text=tool_txt, foreground="#1f8f3d" if self.tool else "#b3261e").grid(
+        if engine_target() is not None:
+            kind = "gömülü" if engine_source() == ENGINE_BUNDLED else "harici"
+            tool_txt = f"yama motoru: {kind} · Schutz-Kaput (PerkTheFox) — dış .py gerekmez"
+            ok_color = True
+        elif self.tool:
+            tool_txt = f"yama motoru: CLI ({self.tool.name}) · Schutz-Kaput (PerkTheFox)"
+            ok_color = True
+        else:
+            tool_txt = "yama motoru: BULUNAMADI"
+            ok_color = False
+        ttk.Label(head, text=tool_txt, foreground="#1f8f3d" if ok_color else "#b3261e").grid(
             row=2, column=1, sticky="w", pady=(2, 0))
         ttk.Button(head, text="Hakkında / Kaynak", command=self._about).grid(
             row=0, column=2, rowspan=3, sticky="e")
@@ -296,8 +420,13 @@ class Builder(ttk.Frame):
                 self.master.geometry(geo)
             except tk.TclError:
                 pass
-        if not self.tool:
-            self._log("✘ ks_patcher.py bulunamadı — derleme yapılamaz.", "err")
+        if engine_target() is None:
+            self._log("✘ Yama motoru yüklenemedi.", "err")
+            self._log(f"  motor yolu: {ENGINE_BUNDLED}", "dim")
+            for ln in (_ENGINE_ERROR or "bilinmeyen hata").strip().splitlines()[-5:]:
+                self._log("  " + ln, "err")
+        else:
+            self._log(f"✔ Yama motoru hazır: {engine_source()}", "dim")
 
     # ---------- günlük ----------
     def _log(self, text: str, tag: str | None = None) -> None:
@@ -453,8 +582,9 @@ class Builder(ttk.Frame):
     def _start(self) -> None:
         if self.running:
             return
-        if not self.tool:
-            messagebox.showerror(APP_TITLE, "ks_patcher.py bulunamadı (Schutz-Kaput).")
+        if engine_target() is None and not self.tool:
+            messagebox.showerror(APP_TITLE, "Yama motoru yüklenemedi.\n"
+                                            "Gömülü motor bulunamadı ve ks_patcher.py de yok.")
             return
         targets = [iid for iid, it in self.items.items() if it["ticked"]]
         if not targets:
@@ -513,13 +643,11 @@ class Builder(ttk.Frame):
                 if dest.exists():
                     shutil.rmtree(dest)
                 # 1) ön kontrol (stok durum + format)
-                r = run_tool(self.tool, ["-l", "en", "-t", TARGET_ID, "inspect", str(src), "--json"])
-                info = parse_json(r.stdout)
+                info = inspect_path(src)
                 if info is None:
-                    msg = (r.stdout + r.stderr).strip().splitlines()
-                    reason = msg[-1][:160] if msg else "okunamadı"
+                    reason = "dosya okunamadı (format/destek dışı)"
                     self.q.put(("row", iid, {"status": "HATA", "note": reason}))
-                    self.q.put(("log", f"  ✘ okunamadı: {reason}", "err"))
+                    self.q.put(("log", f"  ✘ {reason}", "err"))
                     results.append((tag, "HATA", reason))
                     self.q.put(("prog", 100 * n / len(targets)))
                     continue
@@ -535,21 +663,33 @@ class Builder(ttk.Frame):
                         fo[opt_key] = False
                         self.q.put(("log", f"  ⚠ {name}: bu sürümde yama imzası yok → atlandı", "warn"))
 
-                # 2) yamala
+                # 2) yamala — motor gömülüyse süreç açmadan, değilse CLI ile
                 self.q.put(("row", iid, {"status": "çalışıyor…", "note": "yamalanıyor"}))
-                cmd = build_patch_cmd(self.tool, src, cp=fo["cp"], fec=fo["fec"],
-                                      kdtc=fo["kdtc"], xcp=fo["xcp"], odx=fo["odx"],
-                                      out_dir=dest)
-                self.q.put(("log", "  $ " + " ".join(cmd[1:]), "cmd"))
-                r = run_tool(self.tool, cmd[2:])
-                if r.returncode != 0:
-                    tail = (r.stdout + r.stderr).strip().splitlines()
-                    reason = " | ".join(tail[-3:])[:200]
-                    self.q.put(("row", iid, {"status": "HATA", "note": reason}))
-                    self.q.put(("log", f"  ✘ yama başarısız: {reason}", "err"))
-                    results.append((tag, "HATA", reason))
-                    self.q.put(("prog", 100 * n / len(targets)))
-                    continue
+                if engine_target() is not None:
+                    self.q.put(("log", f"  $ gömülü motor · patch_file(fec={fo['fec']}, "
+                                       f"kdtc={fo['kdtc']}, xcp={fo['xcp']})", "cmd"))
+                    okp, perr = patch_with_engine(src, dest, fec=fo["fec"], kdtc=fo["kdtc"],
+                                                  xcp=fo["xcp"], odx=fo["odx"])
+                    if not okp:
+                        self.q.put(("row", iid, {"status": "HATA", "note": perr}))
+                        self.q.put(("log", f"  ✘ yama başarısız: {perr}", "err"))
+                        results.append((tag, "HATA", perr))
+                        self.q.put(("prog", 100 * n / len(targets)))
+                        continue
+                else:
+                    cmd = build_patch_cmd(self.tool, src, cp=fo["cp"], fec=fo["fec"],
+                                          kdtc=fo["kdtc"], xcp=fo["xcp"], odx=fo["odx"],
+                                          out_dir=dest)
+                    self.q.put(("log", "  $ " + " ".join(cmd[1:]), "cmd"))
+                    r = run_tool(self.tool, cmd[2:])
+                    if r.returncode != 0:
+                        tail = (r.stdout + r.stderr).strip().splitlines()
+                        reason = " | ".join(tail[-3:])[:200]
+                        self.q.put(("row", iid, {"status": "HATA", "note": reason}))
+                        self.q.put(("log", f"  ✘ yama başarısız: {reason}", "err"))
+                        results.append((tag, "HATA", reason))
+                        self.q.put(("prog", 100 * n / len(targets)))
+                        continue
 
                 # 3) doğrula
                 self.q.put(("row", iid, {"status": "çalışıyor…", "note": "doğrulanıyor"}))
@@ -580,8 +720,7 @@ class Builder(ttk.Frame):
             return False, f"çıktı eksik (PART1={len(p1)}, PART2={len(p2)})", {}
         notes = []
         # konteynerden durum oku
-        r = run_tool(self.tool, ["-l", "en", "-t", TARGET_ID, "inspect", str(p1[0]), "--json"])
-        info = parse_json(r.stdout)
+        info = inspect_path(p1[0])
         if info is None:
             return False, "yamalı konteyner okunamadı", {}
         states = {"ks_state": info["ks_state"], "fec_state": info["fec_state"],
@@ -695,7 +834,79 @@ class Builder(ttk.Frame):
         self.master.destroy()
 
 
+def run_cli(argv: list[str]) -> int:
+    """Komut satırı modu (GUI açmadan toplu derleme):
+    exe --out <klasör> [--no-fec] [--kdtc] [--xcp] [--bin] <dosya...>"""
+    import argparse
+
+    p = argparse.ArgumentParser(prog="2Q0-Duzenleyici", add_help=True,
+                                description="Ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
+    p.add_argument("files", nargs="+", help="ham firmware (FL_*.frf / .odx-f / .pdx / .bin)")
+    p.add_argument("--out", required=True, help="çıktı klasörü")
+    p.add_argument("--no-fec", action="store_true", help="FeC yamalarını uygulama")
+    p.add_argument("--kdtc", action="store_true", help="virgin key DTC bastır")
+    p.add_argument("--xcp", action="store_true", help="XCP/CAN0 (mühendislik)")
+    p.add_argument("--bin", action="store_true", help="ODX paketi yerine .bin üret")
+    a = p.parse_args(argv)
+
+    # konsol kod sayfası (cp1254 vb.) Unicode'u bozmasın
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+    if engine_target() is None:
+        print(f"✘ yama motoru yüklenemedi: {_ENGINE_ERROR or 'bilinmeyen hata'}")
+        return 2
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    # --windowed exe'de stdout olmayabilir: çıktıyı dosyaya yönlendir
+    if sys.stdout is None:
+        try:
+            logf = open(out / "konsol.log", "w", encoding="utf-8")
+            sys.stdout = logf
+            sys.stderr = logf
+        except OSError:
+            pass
+    fec, kdtc, xcp, odx = (not a.no_fec), a.kdtc, a.xcp, (not a.bin)
+    rc = 0
+    for f in a.files:
+        src = Path(f)
+        label, part = label_from_name(src.name)
+        dest = out / (f"{label}_{part}" if label != "?" else src.stem)
+        if dest.exists():
+            shutil.rmtree(dest)
+        info = inspect_path(src)
+        if info is None:
+            print(f"✘ {src.name}: okunamadı (format/destek dışı)")
+            rc = 1
+            continue
+        kfec = kdtc and info.get("key_dtc_state") in ("stock", "patched")
+        kxcp = xcp and info.get("xcp_state") in ("stock", "patched")
+        if kdtc and not kfec:
+            print(f"  ⚠ {src.name}: Key DTC imzası yok → atlandı")
+        if xcp and not kxcp:
+            print(f"  ⚠ {src.name}: XCP imzası yok → atlandı")
+        ok, msg = patch_with_engine(src, dest, fec=fec, kdtc=kfec, xcp=kxcp, odx=odx)
+        if not ok:
+            print(f"✘ {src.name}: {msg}")
+            rc = 1
+            continue
+        if odx:
+            p1 = sorted((dest / "PART1").glob("*.odx*"))
+            v = inspect_path(p1[0]) if p1 else None
+            st = f"CP={v['ks_state']}, FeC={v['fec_state']}, KDT={v['key_dtc_state']}" if v else "doğrulanamadı"
+            print(f"✔ {dest.name}: {st} → {dest}")
+        else:
+            print(f"✔ {dest.name}: {len(list(dest.glob('*.bin')))} .bin → {dest}")
+    return rc
+
+
 def main() -> int:
+    if len(sys.argv) > 1:
+        return run_cli(sys.argv[1:])
     root = tk.Tk()
     root.title(f"{APP_SHORT}  v{APP_VERSION}")
     # pencere / görev çubuğu simgesi
