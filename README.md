@@ -43,13 +43,13 @@ DenizliGaraj-2Q.bat             # çift tıkla
 
 ### Yama motoru (geliştirici modu)
 
-exe gömülü motorla gelir. Kaynaktan (`python denizli_garaj_2q.py`) çalıştırırken motor şu
-sırayla aranır: `motor/` (paket içi) → `ks_patcher.py` yanındaki klasör → `Documents/tools/mqb-kshutz-kaput`.
-Yoksa:
+exe gömülü motorla gelir ve **hiçbir zaman internete bağlanmaz / dosya indirmez**.
+Kaynaktan (`python denizli_garaj_2q.py`) çalıştırırken motor şu sırayla aranır:
+`motor/` (paket içi, depoda mevcut) → yereldeki `ks_patcher.py` klasörü → `Documents/tools/mqb-kshutz-kaput`.
+Depoda `motor/` bulunduğu için ek indirme gerekmez.
 
-```bash
-git clone https://github.com/perkthefox/mqb-kshutz-kaput
-```
+> `motor/` klasörü sürüm yükseltmek istersen Schutz-Kaput deposundan elle güncellenebilir:
+> https://github.com/perkthefox/mqb-kshutz-kaput (program bunu kendisi indirmez).
 
 ## Kullanım
 

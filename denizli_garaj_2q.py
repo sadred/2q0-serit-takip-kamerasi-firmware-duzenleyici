@@ -34,10 +34,12 @@ from tkinter import filedialog, messagebox, ttk
 
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
                 "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
+CREDIT_LINE = ("Kaynak: Schutz-Kaput — PerkTheFox  ·  github.com/perkthefox/mqb-kshutz-kaput"
+               "  ·  Denizli Garaj")
 TARGET_ID = "mfk3"
 HERE = Path(__file__).resolve().parent
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -403,8 +405,13 @@ class Builder(ttk.Frame):
                            ("cmd", "#79c0ff"), ("dim", "#8b949e"), ("head", "#c9a0ff")):
             self.log.tag_configure(tag, foreground=color)
 
-        ttk.Label(self, textvariable=self.v_status, foreground="#6b6b6b").grid(
-            row=6, column=0, sticky="w", pady=(4, 0))
+        foot = ttk.Frame(self)
+        foot.grid(row=6, column=0, sticky="ew", pady=(4, 0))
+        foot.columnconfigure(0, weight=1)
+        ttk.Label(foot, textvariable=self.v_status, foreground="#6b6b6b").grid(row=0, column=0, sticky="w")
+        # alıntı / kaynak bilgisi — pencerenin sağ altı
+        ttk.Label(foot, text=CREDIT_LINE, foreground="#8b949e",
+                  font=("Segoe UI", 8)).grid(row=0, column=1, sticky="e", padx=(12, 0))
 
     def _apply_cfg(self) -> None:
         c = self.cfg
@@ -445,7 +452,9 @@ class Builder(ttk.Frame):
             "(CP pasif · FeC · virgin key DTC bastırma) uygular ve ODIS-E ile yazılabilir\n"
             "PART1 + PART2 paketlerini üretir. Her dosya ayrıca doğrulanır.\n\n"
             f"Kullanılan kaynak / yama motoru:\n{SOURCE_PROJECT}\n"
-            "Bu program o projenin kodunu içermez; ks_patcher.py'yi harici olarak çağırır.\n\n"
+            "Yama motoru bu programın İÇİNE gömülüdür: harici .py dosyası, kurulum veya\n"
+            "internet bağlantısı GEREKMEZ. Program internete bağlanmaz ve hiçbir şey indirmez;\n"
+            "tüm işlemler bilgisayarında, yerel dosyalarla yapılır.\n\n"
             "Bu program hiçbir firmware veya OEM kodu içermez. Tüm firmware dosyaları\n"
             "kullanıcının kendi diskindedir.\n\n"
             "Lisans: non-commercial / Right-to-Repair — satış ve ücretli hizmet yasak.\n"
