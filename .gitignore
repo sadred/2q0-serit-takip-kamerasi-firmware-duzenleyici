@@ -1,0 +1,23 @@
+# Derleme çıktıları / sanal ortam
+.build-venv/
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# Yerel ayarlar
+duzenleyici_ayarlar.json
+
+# OEM firmware ASLA repoya girmez (telif hakkı)
+org/
+*.frf
+*.odx
+*.odx-f
+*.pdx
+*.bin
+!assets/*.bin
+
+# Kendi test çıktıların
+2Q_KAMERA_YAMALI*/
+MFK3_CRACKLI*/
