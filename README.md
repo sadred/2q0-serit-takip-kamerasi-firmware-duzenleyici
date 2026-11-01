@@ -74,6 +74,41 @@ Depoda `motor/` bulunduğu için ek indirme gerekmez.
 İstenen bir grubun imzası o firmware'de yoksa (ör. SW 1202'de `Xcp_BootControl`) o seçenek
 **o dosya için** uyarıyla atlanır; dosya yine `TAMAM` olur ve notta `imza yok: xcp` yazar.
 
+## Veri seti (dataset) düzenleyici — v2.4
+
+İkinci sekme (**2 · Veri seti (dataset)**) 2Q0 kameranın **DB_7100FLASHDATA** veri setini (64 KB /
+`0x10000`) düzenler: araç ölçüleri, KLR uyarı süresi, Lane Assist / şerit takibi / FLA devreye
+girme hızları. Program **internete bağlanmaz**; dosya senden gelir (`.odx-f`, `.xml` veya 64 KB `.bin`).
+
+| Parametre | Adres | Tip / birim |
+|---|---|---|
+| Araç uzunluğu / genişliği / yüksekliği | `0x0010` `0x0014` `0x0018` | float32 · m → **mm** |
+| Aks aralığı | `0x0028` | float32 · m → **mm** |
+| Kamera montaj yüksekliği | `0x004C` | float32 · m → **mm** |
+| KLR uyarısına kadar süre | `0x05B4` | float32 · ×100 → **sn** (5…600) |
+| Lane Assist devreye girme hızı | `0x0CD8` | float32 · **km/h** |
+| Şerit takibi (ALG) devreye girme hızı | `0x0E44` | float32 · **km/h** |
+| FLA başlangıç / bitiş hızı (no 4B) | `0x0F28` `0x0F40` | float32 · **km/h** |
+| Gelişmiş: Lane Keeping (ACC yok), füzyon varsayılanları | `0x0E68` `0x06AC` `0x06D4` `0x07A4` | float32 (ham) |
+
+**Kaydetme kuralları (araç yazılımının beklediği):**
+
+- **XOR imzası** `0x030C` (4 bayt): yeni imza = eski imza XOR değişen baytların `(eski XOR yeni)`
+  toplamı; bölge `0x0310 … 0x1A7C`.
+- **CRC-32** `0xFFF8`: kapsam uzunluğu son 2 bayttan (`0xFFFE`, big-endian, tipik `0xFFF8`) okunur,
+  imza yazıldıktan **sonra** hesaplanır.
+- Proje etiketi `0xFFE5` (12 bayt ASCII) — istenirse değiştirilir.
+- ODX çıktısı **sıkıştırmasız (`ENCRYPT-COMPRESS-METHOD = 00`)** yazılır, `COMPRESSED-SIZE` ve
+  dataset bloğunun `FW-CHECKSUM`/`FW-SIGNATURE` güvenlik öğeleri kaldırılır (imza geçersiz olduğu için).
+- Girdi `.bin` ise çıktı da `.bin` olur (kendi yazıcınla yazarsın).
+
+**⚠ Kritik:** veri setini değiştirdikten sonra kameraya **yazılım (firmware) güncellemesi yapma** —
+ünite kalıcı olarak kilitlenir. Güncelleme gerekiyorsa önce mevcut yazılımına uygun **stok veri seti**
+yükle. Değiştirilmiş veri setleri "stok" sayılmaz (orijinal imzaları yoktur).
+
+Doğrulama: `python denizli_garaj_2q.py --dataset-selftest <klasör>` → `dataset_selftest.txt`
+(`yuklendi=65536 crc_ok=True`, `fark=8`, `lzss_ham=…`, `rc=0`).
+
 ## Flash (ODIS-E 17/18 + VAS 6154A)
 
 1. `PART1\` içindeki `.odx-f` → flash. Sonunda **imza hatası beklenir**, kontağı/adaptörü KESME.

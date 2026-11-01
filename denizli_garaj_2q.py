@@ -32,11 +32,16 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+try:
+    import ds_tab
+except Exception:  # noqa: BLE001
+    ds_tab = None  # type: ignore[assignment]
+
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.3"
+APP_VERSION = "2.4"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
-                "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
+                "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi · veri seti (dataset) düzenleyici")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
 CREDIT_LINE = ("Kaynak: Schutz-Kaput — PerkTheFox  ·  github.com/perkthefox/mqb-kshutz-kaput"
                "  ·  Denizli Garaj")
@@ -292,9 +297,32 @@ class Builder(ttk.Frame):
     # ---------- görünüm ----------
     def _ui(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        head = ttk.Frame(self)
+        self.nb = ttk.Notebook(self)
+        self.nb.grid(row=0, column=0, sticky="nsew")
+        host = ttk.Frame(self.nb, padding=(0, 0, 0, 6))
+        self.nb.add(host, text="  1 · Firmware yamalama  ")
+        host.columnconfigure(0, weight=1)
+        host.rowconfigure(2, weight=1)
+
+        tab_ds = ttk.Frame(self.nb)
+        self.nb.add(tab_ds, text="  2 · Veri seti (dataset)  ")
+        if ds_tab is not None:
+            tab_ds.columnconfigure(0, weight=1)
+            tab_ds.rowconfigure(0, weight=1)
+            try:
+                self.ds_view = ds_tab.DatasetTab(tab_ds, out_dir=str(APP_DIR / "cikti_veriseti"),
+                                                 log=self._log)
+                self.ds_view.grid(row=0, column=0, sticky="nsew")
+            except Exception as exc:  # noqa: BLE001
+                ttk.Label(tab_ds, text=f"Veri seti sekmesi yüklenemedi: {exc}",
+                          foreground="#b3261e").grid(row=0, column=0, padx=12, pady=12)
+        else:
+            ttk.Label(tab_ds, text="Veri seti modülü (dataset_2q0.py) bulunamadı.",
+                      foreground="#b3261e").grid(row=0, column=0, padx=12, pady=12)
+
+        head = ttk.Frame(host)
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(1, weight=1)
         self._logo = None
@@ -312,7 +340,7 @@ class Builder(ttk.Frame):
             row=0, column=2, rowspan=2, sticky="e")
 
         # --- girdi ---
-        src = ttk.LabelFrame(self, text=" 1 · Girdi (ham firmware) ", padding=8)
+        src = ttk.LabelFrame(host, text=" 1 · Girdi (ham firmware) ", padding=8)
         src.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         src.columnconfigure(3, weight=1)
         ttk.Button(src, text="Dosya ekle…", command=self._add_files).grid(row=0, column=0)
@@ -323,7 +351,7 @@ class Builder(ttk.Frame):
         self.lbl_count.grid(row=0, column=4, sticky="e")
 
         # --- liste + seçenekler ---
-        mid = ttk.Frame(self)
+        mid = ttk.Frame(host)
         mid.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
         mid.columnconfigure(0, weight=1)
         mid.rowconfigure(0, weight=1)
@@ -347,7 +375,7 @@ class Builder(ttk.Frame):
         self.tree.tag_configure("run", foreground="#1f5f8f")
         self.tree.tag_configure("off", foreground="#8b949e")
 
-        opt = ttk.LabelFrame(self, text=" 2 · Ne uygulanacak? ", padding=8)
+        opt = ttk.LabelFrame(host, text=" 2 · Ne uygulanacak? ", padding=8)
         opt.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         opt.columnconfigure(3, weight=1)
         ttk.Checkbutton(opt, text="CP pasif (bileşen koruması)", variable=self.v_cp).grid(row=0, column=0, sticky="w")
@@ -367,7 +395,7 @@ class Builder(ttk.Frame):
         ttk.Button(outf, text="Aç", width=6, command=self._open_out).grid(row=0, column=3, padx=(4, 0))
 
         # --- aksiyon ---
-        act = ttk.Frame(self)
+        act = ttk.Frame(host)
         act.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         act.columnconfigure(3, weight=1)
         self.btn_start = ttk.Button(act, text="▶ Derle", command=self._start)
@@ -378,9 +406,9 @@ class Builder(ttk.Frame):
         ttk.Label(act, textvariable=self.v_summary, foreground="#1f5f8f").grid(row=0, column=3, sticky="w", padx=(12, 0))
         ttk.Progressbar(act, variable=self.v_prog, maximum=100, length=180).grid(row=0, column=4, sticky="e")
 
-        logf = ttk.LabelFrame(self, text=" Günlük ", padding=4)
+        logf = ttk.LabelFrame(host, text=" Günlük ", padding=4)
         logf.grid(row=5, column=0, sticky="nsew", pady=(6, 0))
-        self.rowconfigure(5, weight=1)
+        host.rowconfigure(5, weight=1)
         logf.columnconfigure(0, weight=1)
         logf.rowconfigure(0, weight=1)
         self.log = tk.Text(logf, height=9, wrap="none", font=("Consolas", 9),
@@ -393,7 +421,7 @@ class Builder(ttk.Frame):
                            ("cmd", "#79c0ff"), ("dim", "#8b949e"), ("head", "#c9a0ff")):
             self.log.tag_configure(tag, foreground=color)
 
-        foot = ttk.Frame(self)
+        foot = ttk.Frame(host)
         foot.grid(row=6, column=0, sticky="ew", pady=(4, 0))
         foot.columnconfigure(0, weight=1)
         ttk.Label(foot, textvariable=self.v_status, foreground="#6b6b6b").grid(row=0, column=0, sticky="w")
@@ -831,9 +859,60 @@ class Builder(ttk.Frame):
         self.master.destroy()
 
 
+def dataset_selftest(out: Path) -> int:
+    """Frozen exe'de veri seti motorunu (LZSS + imza + CRC) doğrular."""
+    import struct
+    lines: list[str] = []
+    rc = 0
+    try:
+        import dataset_2q0 as d
+    except Exception as exc:  # noqa: BLE001
+        return 2
+    raw = bytearray(d.DATASET_SIZE)
+    for f in d.FIELDS:
+        d.put_f32(raw, f.offset, 4.0 if f.unit == "mm" else 30.0)
+    d.set_project_tag(raw, "SELFTEST")
+    raw[d.CRC_LEN_OFFSET:d.CRC_LEN_OFFSET + 2] = (0xFFF8).to_bytes(2, "big")
+    raw[d.SIG_OFFSET:d.SIG_OFFSET + 4] = b""
+    span = 0xFFF8
+    import zlib as _z
+    raw[d.CRC_OFFSET:d.CRC_OFFSET + 4] = (_z.crc32(bytes(raw[:span])) & 0xFFFFFFFF).to_bytes(4, "big")
+    src = out / "selftest_dataset.bin"
+    src.write_bytes(raw)
+    ds = d.load(src)
+    lines.append(f"yuklendi={len(ds.raw)} crc_ok={ds.crc_ok()}")
+    new_vals = ds.values()
+    new_vals["laneAssistActivationSpeed"] = 40.0
+    new_raw, diff = d.apply_values(ds, new_vals)
+    lines.append(f"fark={len(diff)} yeni_crc_ok={d.stored_crc(new_raw) == d.computed_crc(new_raw)}")
+    (out / "selftest_dataset_duz.bin").write_bytes(new_raw)
+    back = d.load(out / "selftest_dataset_duz.bin")
+    lines.append(f"geri_okunan={back.values()['laneAssistActivationSpeed']}")
+    # LZSS yolu (motor içinden)
+    try:
+        from motor.core.containers import lzss_a0_compress
+        comp = lzss_a0_compress(bytes(raw))
+        lines.append(f"lzss_ham={len(comp)}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"lzss_HATA={exc}")
+        rc = 1
+    if not ds.crc_ok() or len(diff) == 0 or abs(back.values()["laneAssistActivationSpeed"] - 40.0) > 0.01:
+        rc = 1
+    lines.append(f"rc={rc}")
+    (out / "dataset_selftest.txt").write_text("\n".join(lines), encoding="utf-8")
+    if sys.stdout is not None:
+        print("\n".join(lines))
+    return rc
+
+
 def run_cli(argv: list[str]) -> int:
     """Komut satırı modu (GUI açmadan toplu derleme):
     exe --out <klasör> [--no-fec] [--kdtc] [--xcp] [--bin] <dosya...>"""
+    if "--dataset-selftest" in argv:
+        i = argv.index("--dataset-selftest")
+        target = Path(argv[i + 1]) if i + 1 < len(argv) and not argv[i + 1].startswith("-") else Path.cwd()
+        target.mkdir(parents=True, exist_ok=True)
+        return dataset_selftest(target)
     import argparse
 
     p = argparse.ArgumentParser(prog="2Q0-Duzenleyici", add_help=True,
