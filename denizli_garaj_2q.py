@@ -39,7 +39,7 @@ except Exception:  # noqa: BLE001
 
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.5"
+APP_VERSION = "2.6"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
                 "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi · veri seti (dataset) düzenleyici")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"

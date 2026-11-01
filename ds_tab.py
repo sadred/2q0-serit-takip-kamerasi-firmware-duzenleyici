@@ -245,22 +245,29 @@ class DatasetTab(ttk.Frame):
         out_dir = Path(self.out_var.get().strip()
                        or (self.ds.archive.parent if self.ds.archive
                            else (Path(self.ds.source).parent if self.ds.source else Path.cwd())))
-        out = out_dir / f"{base}_duzenlenmis{suffix}"
+        written: list[Path] = []
         try:
-            saved = dsx.save(self.ds, out, new_raw)
+            written = dsx.save_bundle(self.ds, out_dir, new_raw, base)
+            if self.ds.archive is not None:
+                written.append(dsx.save(self.ds, out_dir / f"{base}_duzenlenmis.zip", new_raw))
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Yazılamadı", str(exc))
             return
-        self.status_var.set(f"✔ {len(diff)} bayt değişti → {saved.name}")
-        self.log(f"Veri seti yazıldı: {saved} · {len(diff)} bayt fark · CRC "
+        names = ", ".join(p.name for p in written)
+        self.status_var.set(f"✔ {len(diff)} bayt değişti → {names}")
+        self.log(f"Veri seti yazıldı: {names} · {len(diff)} bayt fark · CRC "
                  f"0x{dsx.stored_crc(new_raw):08X} (doğrulandı)", "ok")
+        extra = ""
+        if getattr(self.ds, "frf_inner", None):
+            extra = ("\n\nFRF yeniden paketlendi ama imzası GEÇERSİZ (FDS_service42.sig güncellenmedi).\n"
+                     "Araçta yazma için en güvenli yol .bin (VCP) veya imzasız .odx (ODIS-E mühendislik).")
         messagebox.showinfo(
             "Veri seti kaydedildi",
-            f"{saved}\n\n"
+            "\n".join(str(p) for p in written) + "\n\n"
             f"Değişen bayt: {len(diff)}\n"
             f"Yeni CRC-32: 0x{dsx.stored_crc(new_raw):08X} (doğru)\n"
             f"Yeni imza: {dsx.stored_signature(new_raw).hex().upper()}\n\n"
-            "Bu dosyayı ODIS-E / VCP ile kameraya yazabilirsin.")
+            "Bu dosyaları ODIS-E / VCP ile kameraya yazabilirsin." + extra)
 
     def _save_bin(self) -> None:
         if self.ds is None:

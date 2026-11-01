@@ -334,6 +334,8 @@ class Dataset:
     archive_member: str = ""        # arşiv içindeki göreli yol
     extract_dir: Path | None = None # arşivin açıldığı klasör
     extracted: list[Path] = field(default_factory=list)
+    frf_inner: str | None = None    # FRF içindeki .odx üye adı
+    odis_xml: Path | None = None    # ODIS cevap XML'i
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -374,7 +376,7 @@ def load(path: str | Path) -> Dataset:
     p = Path(path)
     if is_archive(p):
         extract_dir, files = extract_archive(p)
-        chosen, candidates = pick_dataset_file(files)
+        chosen, candidates = pick_dataset_member(files, extract_dir)
         if chosen is None:
             listing = ", ".join(f.name for f in files[:12]) or "(boş)"
             raise ValueError(
@@ -394,7 +396,7 @@ def load(path: str | Path) -> Dataset:
     return _load_file(p)
 
 
-def _load_file(path: str | Path) -> Dataset:
+def _load_plain_file(path: str | Path) -> Dataset:
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".bin":
@@ -404,6 +406,8 @@ def _load_file(path: str | Path) -> Dataset:
     text = p.read_text(encoding="utf-8", errors="replace")
     if suffix == ".frf":
         raise ValueError("FRF konteyneri veri seti değil — dataset .odx-f/.xml veya 64 KB .bin ver")
+    if _is_odis_response(text):
+        raise ValueError("ODİS cevap XML'i doğrudan yüklenemez; yanındaki .frf dosyasını seç")
     root = ET.fromstring(text)
     fd, db, block_name = _pick_dataset_block(root)
     method_txt = (fd.findtext("ENCRYPT-COMPRESS-METHOD") or "00").strip().upper()
@@ -466,14 +470,14 @@ def _replace_hex_data(xml_text: str, fd_id: str | None, hex_body: str) -> str:
     """Verilen FLASHDATA'nın <DATA> içeriğini değiştirir (kimliğe göre, yoksa 2.)"""
     if fd_id:
         pat = re.compile(
-            r"(<FLASHDATA\b[^>]*\bID=\"" + re.escape(fd_id) + r"\"[^>]*>.*?<DATA[^>]*>)(.*?)(</DATA>)",
+            r"(<FLASHDATA\b[^>]*\bID=\"" + re.escape(fd_id) + r"\"[^>]*>.*?<DATA(?=[\s>])[^>]*>)(.*?)(</DATA>)",
             re.DOTALL)
         m = pat.search(xml_text)
         if m:
             return xml_text[:m.start(2)] + hex_body + xml_text[m.end(2):]
     # kimlik bulunamadı: ikinci FLASHDATA'nın DATA'sı
     count = 0
-    for m in re.finditer(r"(<FLASHDATA\b[^>]*>.*?<DATA[^>]*>)(.*?)(</DATA>)", xml_text, re.DOTALL):
+    for m in re.finditer(r"(<FLASHDATA\b[^>]*>.*?<DATA(?=[\s>])[^>]*>)(.*?)(</DATA>)", xml_text, re.DOTALL):
         count += 1
         if count == 2:
             return xml_text[:m.start(2)] + hex_body + xml_text[m.end(2):]
@@ -506,7 +510,7 @@ def _drop_compressed_size(xml_text: str) -> str:
 
 def _drop_dataset_security(xml_text: str) -> str:
     """Yalnız DB_7100 (dataset) DATABLOCK'u içindeki FW-CHECKSUM'lu SECURITY'leri kaldırır."""
-    block_re = re.compile(r"<DATABLOCK\b[^>]*DB_7100[^>]*>.*?</DATABLOCK>", re.DOTALL)
+    block_re = re.compile(r"<DATABLOCK\s[^>]*DB_7100[^>]*>.*?</DATABLOCK>", re.DOTALL)
     sec_re = re.compile("<SECURITY>.*?</SECURITY>", re.DOTALL)
 
     def _clean_block(m: re.Match[str]) -> str:
@@ -554,17 +558,31 @@ def _save_archive(ds: Dataset, new_raw: bytes, out: Path) -> Path:
     if ds.extract_dir is None or not ds.extracted:
         raise ValueError("Arşiv içeriği bellekte yok")
     member = ds.archive_member or (ds.source.name if ds.source else "dataset.bin")
-    payload = (_render_odx_text(ds, new_raw).encode("utf-8") if ds.kind == "odx" else new_raw)
+    if member.lower().endswith(".frf") and getattr(ds, "frf_inner", None):
+        payload = build_frf(ds, new_raw)
+    elif ds.kind == "odx":
+        payload = _render_odx_text(ds, new_raw).encode("utf-8")
+    else:
+        payload = new_raw
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in ds.extracted:
             try:
                 rel = str(f.relative_to(ds.extract_dir))
             except ValueError:
                 continue
-            if rel.replace("\\", "/").lower() == member.replace("\\", "/").lower():
+            is_target = rel.replace("\\", "/").lower() == member.replace("\\", "/").lower()
+            if is_target:
                 zf.writestr(rel, payload)
-            else:
-                zf.write(f, rel)
+                continue
+            if f.suffix.lower() == ".xml" and getattr(ds, "frf_inner", None):
+                try:
+                    txt = f.read_text(encoding="utf-8", errors="replace")
+                    if _is_odis_response(txt):
+                        zf.writestr(rel, refresh_odis_response(txt, payload).encode("utf-8"))
+                        continue
+                except Exception:  # noqa: BLE001
+                    pass
+            zf.write(f, rel)
     return out
 
 
@@ -606,3 +624,217 @@ def summary(ds: Dataset) -> dict[str, object]:
 def restore_stock(ds: Dataset) -> bytes:
     """Kaynak dosyadaki baytları döndürür (değişiklikleri geri al)."""
     return ds.raw
+
+
+# --------------------------------------------------------------------------- #
+# FRF konteyneri + ODIS cevap XML'i
+# --------------------------------------------------------------------------- #
+def _is_odis_response(text: str) -> bool:
+    head = text[:600]
+    return "<MESSAGE" in head and ("PARAMETER_DATA" in text[:4000] or "COMPRESSED_DATA" in text[:4000])
+
+
+def _frf_crypto():
+    try:
+        from motor.core.containers import frf_decrypt, get_frf_key  # type: ignore
+    except Exception:  # noqa: BLE001
+        from core.containers import frf_decrypt, get_frf_key  # type: ignore
+    return frf_decrypt, get_frf_key
+
+
+def read_frf(path: str | Path) -> tuple[str, str]:
+    """FRF'yi çözer, içindeki ODX metnini ve üye adını döndürür."""
+    import io
+    frf_decrypt, get_frf_key = _frf_crypto()
+    dec = frf_decrypt(Path(path).read_bytes(), get_frf_key())
+    if dec[:2] != b"PK":
+        raise ValueError(f"{Path(path).name}: FRF çözüldü ama zip değil")
+    with zipfile.ZipFile(io.BytesIO(dec)) as zf:
+        names = [n for n in zf.namelist() if n.lower().endswith((".odx", ".odx-f", ".xml"))]
+        if not names:
+            raise ValueError(f"{Path(path).name}: FRF içinde .odx bulunamadı")
+        return zf.read(names[0]).decode("utf-8", "replace"), names[0]
+
+
+def build_frf(ds: "Dataset", new_raw: bytes) -> bytes:
+    """Düzenlenmiş veri setini yeniden FRF'ye paketler (imza geçersiz olur)."""
+    import io
+    frf_decrypt, get_frf_key = _frf_crypto()
+    inner = ds.frf_inner or "dataset.odx"
+    text = _render_odx_text(ds, new_raw)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(inner, text.encode("utf-8"))
+    return frf_decrypt(buf.getvalue(), get_frf_key())
+
+
+def _odis_frf_path(xml_path: Path, text: str) -> Path | None:
+    m = re.search(r'FILENAME="([^"]+)"', text)
+    if m:
+        cand = xml_path.parent / Path(m.group(1)).name
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _odis_tar_frf(text: str, out_dir: Path) -> Path | None:
+    import base64
+    import io as _io
+    import tarfile
+    m = re.search(r"<COMPRESSED_DATA[^>]*>(.*?)</COMPRESSED_DATA>", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        blob = base64.b64decode("".join(m.group(1).split()))
+        with tarfile.open(fileobj=_io.BytesIO(blob)) as tf:
+            for member in tf.getmembers():
+                if member.name.lower().endswith(".frf"):
+                    out = out_dir / Path(member.name).name
+                    data = tf.extractfile(member).read()
+                    out.write_bytes(data)
+                    return out
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def dataset_from_odx_text(text: str, source: Path | None = None) -> "Dataset":
+    """ODX metninden Dataset üretir (DATA inline veya DATAFILE)."""
+    root = ET.fromstring(text)
+    fd, _db, block_name = _pick_dataset_block(root)
+    method_txt = (fd.findtext("ENCRYPT-COMPRESS-METHOD") or "00").strip().upper()
+    method = int(method_txt, 16) if re.fullmatch(r"[0-9A-F]{2}", method_txt) else 0x00
+    data_el = fd.find("DATA")
+    if data_el is not None and (data_el.text or "").strip():
+        payload = bytes.fromhex("".join((data_el.text or "").split()))
+    else:
+        datafile = (fd.findtext("DATAFILE") or "").strip()
+        if not datafile or source is None:
+            raise ValueError("Veri seti FLASHDATA içinde DATA/DATAFILE yok")
+        payload = (source.parent / datafile).read_bytes()
+    if method == 0xA0:
+        payload = _lzss_decompress(payload)
+    elif method != 0x00:
+        raise ValueError(f"Desteklenmeyen ENCRYPT-COMPRESS-METHOD 0x{method:02X}")
+    warnings: list[str] = []
+    if len(payload) != DATASET_SIZE:
+        warnings.append(f"Beklenen 65536 bayt, bulunan {len(payload)} bayt")
+    part = ""
+    for el in root.iter("PARTNUMBER"):
+        if (el.text or "").strip():
+            part = el.text.strip()
+            break
+    return Dataset(raw=payload, kind="odx", source=source, xml_text=text, method=method,
+                   block_name=block_name, part_number=part, warnings=warnings)
+
+
+def _load_frf(path: Path) -> "Dataset":
+    text, inner = read_frf(path)
+    ds = dataset_from_odx_text(text, path)
+    ds.frf_inner = inner
+    return ds
+
+
+def _load_file(path: str | Path) -> "Dataset":
+    """FRF, ODIS cevap XML'i ve normal veri seti dosyalarını yükler."""
+    p = Path(path)
+    suffix = p.suffix.lower()
+    if suffix == ".frf":
+        return _load_frf(p)
+    text = p.read_text(encoding="utf-8", errors="replace")
+    if _is_odis_response(text):
+        frf = _odis_frf_path(p, text)
+        if frf is None:
+            frf = _odis_tar_frf(text, p.parent)
+        if frf is None:
+            raise ValueError(
+                p.name + ": ODIS cevap XML'i, ama yanında/icinde .frf bulunamadi. "
+                "Ayni klasordeki .frf dosyasini sec.")
+        ds = _load_frf(frf)
+        ds.odis_xml = p
+        return ds
+    return _load_plain_file(p)
+
+
+def _score_dataset_candidate(p: Path) -> int:
+    """Arsiv icinde veri seti olma olasiligi (yuksek = daha iyi)."""
+    try:
+        suffix = p.suffix.lower()
+        if suffix == ".frf":
+            text, _inner = read_frf(p)
+            return 100 if DATASET_BLOCK_NAME in text else 10
+        if suffix in (".odx", ".odx-f", ".xml"):
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if _is_odis_response(text):
+                return 40
+            return 90 if DATASET_BLOCK_NAME in text else 0
+        if suffix == ".bin" and p.stat().st_size == DATASET_SIZE:
+            return 80
+    except Exception:  # noqa: BLE001
+        return 0
+    return 0
+
+
+def pick_dataset_member(files, base_dir=None) -> tuple[Path | None, list[Path]]:
+    """Arsivdeki dosyalardan veri setini secer; (secilen, adaylar)."""
+    scored = []
+    for f in files:
+        if not f.is_file():
+            continue
+        sc = _score_dataset_candidate(f)
+        if sc > 0:
+            scored.append((sc, f))
+    scored.sort(key=lambda t: -t[0])
+    candidates = [f for _sc, f in scored]
+    if not candidates:
+        return None, [f for f in files if f.is_file()]
+    return candidates[0], candidates
+
+
+def save_bundle(ds: "Dataset", out_dir: str | Path, new_raw: bytes, base: str) -> list[Path]:
+    """Kullanilabilir tum ciktilari yazar: .bin, .odx (duz) ve varsa .frf."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    b = out_dir / (base + "_duzenlenmis.bin")
+    b.write_bytes(new_raw)
+    written.append(b)
+    if ds.kind == "odx" and ds.xml_text:
+        x = out_dir / (base + "_duzenlenmis.odx")
+        x.write_text(_render_odx_text(ds, new_raw), encoding="utf-8")
+        written.append(x)
+        if getattr(ds, "frf_inner", None):
+            f = out_dir / (base + "_duzenlenmis.frf")
+            f.write_bytes(build_frf(ds, new_raw))
+            written.append(f)
+    return written
+
+
+def refresh_odis_response(text: str, new_frf: bytes) -> str:
+    """ODIS cevap XML'indeki gomulu tar'i (base64) yeni FRF ile yeniler."""
+    import base64
+    import io as _io
+    import tarfile
+    m = re.search(r"(<COMPRESSED_DATA[^>]*>)(.*?)(</COMPRESSED_DATA>)", text, re.DOTALL)
+    if not m:
+        raise ValueError("ODIS cevabinda COMPRESSED_DATA yok")
+    body = m.group(2)
+    blob = base64.b64decode("".join(body.split()))
+    out = _io.BytesIO()
+    with tarfile.open(fileobj=_io.BytesIO(blob)) as tf, tarfile.open(fileobj=out, mode="w") as tw:
+        for mem in tf.getmembers():
+            data = tf.extractfile(mem).read() if mem.isfile() else b""
+            if mem.name.lower().endswith(".frf"):
+                data = new_frf
+            info = tarfile.TarInfo(mem.name)
+            info.size = len(data)
+            info.mtime = mem.mtime
+            info.mode = mem.mode
+            info.uid, info.gid = mem.uid, mem.gid
+            info.uname, info.gname = mem.uname, mem.gname
+            tw.addfile(info, _io.BytesIO(data) if data else None)
+    b64 = base64.b64encode(out.getvalue()).decode("ascii")
+    head = m.group(1)
+    head = re.sub(r'BYTES_UNCOMPRESSED="[0-9]+"', 'BYTES_UNCOMPRESSED="' + str(len(b64)) + '"', head)
+    head = re.sub(r'BYTES_COMPRESSED="[0-9]+"', 'BYTES_COMPRESSED="' + str(len(b64)) + '"', head)
+    return text[:m.start(1)] + head + b64 + text[m.end(2):]
