@@ -102,7 +102,7 @@ veya **`.zip` / `.7z` / `.rar` arşivi** — arşiv otomatik açılıp içindeki
 - ODX çıktısı **sıkıştırmasız (`ENCRYPT-COMPRESS-METHOD = 00`)** yazılır, `COMPRESSED-SIZE` ve
   dataset bloğunun `FW-CHECKSUM`/`FW-SIGNATURE` güvenlik öğeleri kaldırılır (imza geçersiz olduğu için).
 - Girdi `.bin` ise çıktı da `.bin` olur (kendi yazıcınla yazarsın).
-- **Arşiv girdisi:** zip dahili `zipfile` ile, 7z/rar **7-Zip** (`C:\Program Files-Zipz.exe`) veya
+- **Arşiv girdisi:** zip dahili `zipfile` ile, 7z/rar **7-Zip** (`C:\Program Files\7-Zip\7z.exe`) veya
   Windows'un `tar.exe`si (bsdtar/libarchive) ile açılır. Arşivdeki **diğer dosyalar korunarak** yeni bir
   `..._duzenlenmis.zip` üretilir (yalnız değişen veri seti güncellenir).
 
