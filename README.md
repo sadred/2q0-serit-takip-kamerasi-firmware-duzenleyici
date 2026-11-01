@@ -113,6 +113,22 @@ yükle. Değiştirilmiş veri setleri "stok" sayılmaz (orijinal imzaları yoktu
 Doğrulama: `python denizli_garaj_2q.py --dataset-selftest <klasör>` → `dataset_selftest.txt`
 (`yuklendi=65536 crc_ok=True`, `fark=8`, `lzss_ham=…`, `rc=0`).
 
+### FRF / ODIS paketleri (v2.6)
+
+`Kodiaq_653D.zip` gibi gerçek ODIS paketleri desteklenir. Paket tipik olarak şunları içerir:
+
+| Üye | Ne | Programın yaptığı |
+|---|---|---|
+| `DB_00A5_7100_*.frf` | VAG FRF (şifreli zip) — içinde `DB_7100FLASHDATA` | çözülür (gömülü `frf.key`), `.odx` düzenlenir, **yeniden FRF'ye paketlenir** |
+| `KA5_DATA_*.xml` | ODIS `GetParametrizeData` cevabı (`PARAMETER_DATA` + `COMPRESSED_DATA` base64 tar) | içindeki tar **yeni FRF ile yenilenir** |
+| `FDS_service42.sig` | FDS imzası | **güncellenemez** → imza geçersiz kalır |
+
+**Kaydet** her zaman 4 dosya üretir: `.bin` (64 KB, VCP/ODS) · `.odx` (imzasız, sıkıştırmasız) ·
+`.frf` (yeniden paketlenmiş) · `.zip` (diğer üyeler + yenilenmiş ODIS XML'i).
+
+⚠ `FDS_service42.sig` yeniden imzalanamadığı için paketin imzası **geçersizdir**; en güvenli yazma yolu
+`.bin` veya imzasız `.odx`. Veri setini değiştirdikten sonra firmware güncellemesi yine yasak (tuğla).
+
 ## Flash (ODIS-E 17/18 + VAS 6154A)
 
 1. `PART1\` içindeki `.odx-f` → flash. Sonunda **imza hatası beklenir**, kontağı/adaptörü KESME.
