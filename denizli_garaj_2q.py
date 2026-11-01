@@ -37,11 +37,11 @@ try:
 except Exception:  # noqa: BLE001
     ds_tab = None  # type: ignore[assignment]
 
-APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
-APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.6"
+APP_TITLE = "2Q0 Şerit Takip Kamerası Araç Kutusu"
+APP_SHORT = "2Q0 Şerit Takip Kamerası Araç Kutusu"
+APP_VERSION = "2.7"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
-                "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi · veri seti (dataset) düzenleyici")
+                "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi · parametre (dataset) düzenleyici")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
 CREDIT_LINE = ("Kaynak: Schutz-Kaput — PerkTheFox  ·  github.com/perkthefox/mqb-kshutz-kaput"
                "  ·  Denizli Garaj")
@@ -302,12 +302,12 @@ class Builder(ttk.Frame):
         self.nb = ttk.Notebook(self)
         self.nb.grid(row=0, column=0, sticky="nsew")
         host = ttk.Frame(self.nb, padding=(0, 0, 0, 6))
-        self.nb.add(host, text="  1 · Firmware yamalama  ")
+        self.nb.add(host, text="  1 · Firmware Yamalama  ")
         host.columnconfigure(0, weight=1)
         host.rowconfigure(2, weight=1)
 
         tab_ds = ttk.Frame(self.nb)
-        self.nb.add(tab_ds, text="  2 · Veri seti (dataset)  ")
+        self.nb.add(tab_ds, text="  2 · Parametre Düzenleyici  ")
         if ds_tab is not None:
             tab_ds.columnconfigure(0, weight=1)
             tab_ds.rowconfigure(0, weight=1)
@@ -937,7 +937,7 @@ def run_cli(argv: list[str]) -> int:
         return dataset_selftest(target)
     import argparse
 
-    p = argparse.ArgumentParser(prog="2Q0-Duzenleyici", add_help=True,
+    p = argparse.ArgumentParser(prog="2Q0-AracKutusu", add_help=True,
                                 description="Ham firmware → CP/FeC/DTC yamalı ODIS-E paketi")
     p.add_argument("files", nargs="+", help="ham firmware (FL_*.frf / .odx-f / .pdx / .bin)")
     p.add_argument("--out", required=True, help="çıktı klasörü")

@@ -1,5 +1,5 @@
 @echo off
-rem Denizli Garaj 2Q Serit Takip Kamerasi Yazilim Duzenleyici
+rem 2Q0 Serit Takip Kamerasi Arac Kutusu
 setlocal
 cd /d "%~dp0"
 

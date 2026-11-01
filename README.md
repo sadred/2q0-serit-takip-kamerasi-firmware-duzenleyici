@@ -1,4 +1,4 @@
-# Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici
+# 2Q0 Şerit Takip Kamerası Araç Kutusu
 
 Valeo **MFK3** ön ADAS kamerası (`2Q0 980 653` / `653B` / `653C` / `653D` / `653J`, diag **`0x00A5`**)
 için ham firmware dosyalarını **CP pasif + FeC açık + virgin key DTC bastırılmış**, ODIS-E ile
@@ -76,7 +76,7 @@ Depoda `motor/` bulunduğu için ek indirme gerekmez.
 
 ## Veri seti (dataset) düzenleyici — v2.4
 
-İkinci sekme (**2 · Veri seti (dataset)**) 2Q0 kameranın **DB_7100FLASHDATA** veri setini (64 KB /
+İkinci sekme (**2 · Parametre Düzenleyici**) 2Q0 kameranın **DB_7100FLASHDATA** veri setini (64 KB /
 `0x10000`) düzenler: araç ölçüleri, KLR uyarı süresi, Lane Assist / şerit takibi / FLA devreye
 girme hızları. Program **internete bağlanmaz**; dosya senden gelir (`.odx-f`, `.xml`, 64 KB `.bin`
 veya **`.zip` / `.7z` / `.rar` arşivi** — arşiv otomatik açılıp içindeki veri seti bulunur).
