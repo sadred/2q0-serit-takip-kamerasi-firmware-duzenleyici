@@ -78,7 +78,8 @@ Depoda `motor/` bulunduğu için ek indirme gerekmez.
 
 İkinci sekme (**2 · Veri seti (dataset)**) 2Q0 kameranın **DB_7100FLASHDATA** veri setini (64 KB /
 `0x10000`) düzenler: araç ölçüleri, KLR uyarı süresi, Lane Assist / şerit takibi / FLA devreye
-girme hızları. Program **internete bağlanmaz**; dosya senden gelir (`.odx-f`, `.xml` veya 64 KB `.bin`).
+girme hızları. Program **internete bağlanmaz**; dosya senden gelir (`.odx-f`, `.xml`, 64 KB `.bin`
+veya **`.zip` / `.7z` / `.rar` arşivi** — arşiv otomatik açılıp içindeki veri seti bulunur).
 
 | Parametre | Adres | Tip / birim |
 |---|---|---|
@@ -101,6 +102,9 @@ girme hızları. Program **internete bağlanmaz**; dosya senden gelir (`.odx-f`,
 - ODX çıktısı **sıkıştırmasız (`ENCRYPT-COMPRESS-METHOD = 00`)** yazılır, `COMPRESSED-SIZE` ve
   dataset bloğunun `FW-CHECKSUM`/`FW-SIGNATURE` güvenlik öğeleri kaldırılır (imza geçersiz olduğu için).
 - Girdi `.bin` ise çıktı da `.bin` olur (kendi yazıcınla yazarsın).
+- **Arşiv girdisi:** zip dahili `zipfile` ile, 7z/rar **7-Zip** (`C:\Program Files-Zipz.exe`) veya
+  Windows'un `tar.exe`si (bsdtar/libarchive) ile açılır. Arşivdeki **diğer dosyalar korunarak** yeni bir
+  `..._duzenlenmis.zip` üretilir (yalnız değişen veri seti güncellenir).
 
 **⚠ Kritik:** veri setini değiştirdikten sonra kameraya **yazılım (firmware) güncellemesi yapma** —
 ünite kalıcı olarak kilitlenir. Güncelleme gerekiyorsa önce mevcut yazılımına uygun **stok veri seti**

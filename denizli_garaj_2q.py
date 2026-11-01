@@ -39,7 +39,7 @@ except Exception:  # noqa: BLE001
 
 APP_TITLE = "Denizli Garaj 2Q Şerit Takip Kamerası Yazılım Düzenleyici"
 APP_SHORT = "Denizli Garaj 2Q Kamera Düzenleyici"
-APP_VERSION = "2.4"
+APP_VERSION = "2.5"
 APP_SUBTITLE = ("Valeo MFK3 · 2Q0 980 653B/C/D/J · diag 0x00A5 · "
                 "ham firmware → CP/FeC/DTC yamalı ODIS-E paketi · veri seti (dataset) düzenleyici")
 SOURCE_PROJECT = "Schutz-Kaput / PerkTheFox — https://github.com/perkthefox/mqb-kshutz-kaput"
@@ -896,6 +896,28 @@ def dataset_selftest(out: Path) -> int:
     except Exception as exc:  # noqa: BLE001
         lines.append(f"lzss_HATA={exc}")
         rc = 1
+    # arşiv yolu: zip oluştur → aç → doğrula
+    try:
+        import zipfile as _zip
+        zpath = out / "selftest_arsiv.zip"
+        with _zip.ZipFile(zpath, "w", _zip.ZIP_DEFLATED) as zf:
+            zf.write(src, "paket/selftest_dataset.bin")
+            zf.writestr("OKU.txt", "test")
+        dz = d.load(zpath)
+        znew, zdiff = d.apply_values(dz, {**dz.values(), "carWidth": 1800.0})
+        zout = d.save(dz, out / "selftest_arsiv_duz.zip", znew)
+        with _zip.ZipFile(zout) as zf:
+            names = zf.namelist()
+        lines.append(f"arsiv_uye={dz.archive_member} zip_dosyalar={len(names)}")
+        if not (len(dz.raw) == 65536 and zout.is_file() and len(names) == 2):
+            rc = 1
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"arsiv_HATA={exc}")
+        rc = 1
+    try:
+        lines.append(f"7z={d.find_7zip() or 'yok'} bsdtar={d.find_bsdtar() or 'yok'}")
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"arac_HATA={exc}")
     if not ds.crc_ok() or len(diff) == 0 or abs(back.values()["laneAssistActivationSpeed"] - 40.0) > 0.01:
         rc = 1
     lines.append(f"rc={rc}")

@@ -129,7 +129,11 @@ class DatasetTab(ttk.Frame):
     def _pick(self) -> None:
         path = filedialog.askopenfilename(
             title="2Q0 veri seti seç",
-            filetypes=[("ODX-F / XML", "*.odx-f *.odx *.xml"), ("64 KB veri seti", "*.bin"), ("Tümü", "*.*")])
+            filetypes=[("Veri seti / arşiv", "*.odx-f *.odx *.xml *.bin *.zip *.7z *.rar *.tar *.gz"),
+                       ("ODX-F / XML", "*.odx-f *.odx *.xml"),
+                       ("64 KB veri seti", "*.bin"),
+                       ("Arşiv (zip / 7z / rar)", "*.zip *.7z *.rar *.tar *.gz"),
+                       ("Tümü", "*.*")])
         if path:
             self.path_var.set(path)
             self._load(Path(path))
@@ -146,7 +150,8 @@ class DatasetTab(ttk.Frame):
         for root in (Path.home() / "Desktop", Path.home() / "Downloads", Path.home() / "Documents"):
             if not root.is_dir():
                 continue
-            for pat in ("*dataset*.odx-f", "*Dataset*.odx-f", "*DB_7100*", "*2Q0*.odx-f", "*2Q0*.xml"):
+            for pat in ("*dataset*.odx-f", "*Dataset*.odx-f", "*DB_7100*", "*2Q0*.odx-f", "*2Q0*.xml",
+                        "*2Q0*.zip", "*2Q0*.7z", "*2Q0*.rar", "*dataset*.zip", "*Dataset*.zip", "*dataset*.7z"):
                 hits.extend(sorted(root.glob(pat))[:6])
             for f in sorted(root.glob("*.bin")):
                 try:
@@ -184,9 +189,12 @@ class DatasetTab(ttk.Frame):
             if var is not None:
                 var.set(f"{shown:.{f.digits}f}" if f.digits else f"{shown:g}")
         s = dsx.summary(ds)
+        extra = f" · ARŞİV {s['arşiv']} → {s['arşiv_dosya']}" if ds.archive else ""
         self.info_var.set(
             f"{s['tür']} · {s['boyut']:,} bayt · blok {s['blok']} · sıkıştırma {s['sıkıştırma']} · "
-            f"CRC {s['crc']} ({s['crc_durum']}) · imza {s['imza']} · etiket {s['proje_etiketi']}")
+            f"CRC {s['crc']} ({s['crc_durum']}) · imza {s['imza']} · etiket {s['proje_etiketi']}{extra}")
+        for w in ds.warnings:
+            self.log(f"Veri seti uyarısı: {w}", "warn")
         self.status_var.set("")
         self.log(f"Veri seti yüklendi: {path.name} · {s['boyut']:,} bayt · CRC {s['crc_durum']}", "ok")
         if not ds.size_ok:
@@ -228,9 +236,15 @@ class DatasetTab(ttk.Frame):
         if not diff:
             self.status_var.set("Değişiklik yok.")
             return
-        base = self.ds.source.stem if self.ds.source else "dataset"
-        out_dir = Path(self.out_var.get().strip() or (Path(self.ds.source).parent if self.ds.source else Path.cwd()))
-        suffix = self.ds.source.suffix if self.ds.source else ".bin"
+        if self.ds.archive is not None:
+            base = self.ds.archive.stem
+            suffix = ".zip"
+        else:
+            base = self.ds.source.stem if self.ds.source else "dataset"
+            suffix = self.ds.source.suffix if self.ds.source else ".bin"
+        out_dir = Path(self.out_var.get().strip()
+                       or (self.ds.archive.parent if self.ds.archive
+                           else (Path(self.ds.source).parent if self.ds.source else Path.cwd())))
         out = out_dir / f"{base}_duzenlenmis{suffix}"
         try:
             saved = dsx.save(self.ds, out, new_raw)

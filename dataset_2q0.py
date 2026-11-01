@@ -28,8 +28,13 @@ CRC-32 standart (zlib) ve imza yazıldıktan SONRA hesaplanır.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import struct
+import subprocess
+import tempfile
+import zipfile
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +52,142 @@ CRC_LEN_OFFSET = 0xFFFE
 DEFAULT_CRC_SPAN = 0xFFF8
 
 DATASET_BLOCK_NAME = "DB_7100FLASHDATA"
+
+ARCHIVE_SUFFIXES = {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".cab"}
+_SEVENZIP_CANDIDATES = (
+    r"C:\Program Files\7-Zip\7z.exe",
+    r"C:\Program Files (x86)\7-Zip\7z.exe",
+    r"C:\Program Files\NanaZip\NanaZip.exe",
+    r"C:\Program Files\WinRAR\WinRAR.exe",
+)
+
+
+# --------------------------------------------------------------------------- #
+# Arşiv (zip / 7z / rar) desteği
+# --------------------------------------------------------------------------- #
+def find_7zip() -> Path | None:
+    """7z.exe'yi PATH'te ve bilinen kurulum yerlerinde ara."""
+    exe = shutil.which("7z") or shutil.which("7za") or shutil.which("7zz")
+    if exe:
+        return Path(exe)
+    for cand in _SEVENZIP_CANDIDATES:
+        p = Path(cand)
+        if p.is_file():
+            return p
+    return None
+
+
+def find_bsdtar() -> Path | None:
+    """Windows'un kendi bsdtar'ı (libarchive: zip, 7z ve rar okur)."""
+    for cand in (r"C:\Windows\System32\tar.exe", r"C:\Windows\SysWOW64\tar.exe"):
+        p = Path(cand)
+        if p.is_file():
+            return p
+    exe = shutil.which("bsdtar")
+    return Path(exe) if exe else None
+
+
+def is_archive(path: str | Path) -> bool:
+    p = Path(path)
+    if p.suffix.lower() in ARCHIVE_SUFFIXES:
+        return True
+    try:
+        with p.open("rb") as fh:
+            magic = fh.read(8)
+    except OSError:
+        return False
+    return magic[:2] == b"PK" or magic[:6] == b"7z\xbc\xaf\x27\x1c" or magic[:4] == b"Rar!"
+
+
+def extract_archive(path: str | Path, dest: str | Path | None = None) -> tuple[Path, list[Path]]:
+    """Arşivi geçici klasöre açar; (hedef klasör, dosya listesi) döndürür."""
+    src = Path(path)
+    out_dir = Path(dest) if dest else Path(tempfile.mkdtemp(prefix="2q0_ds_"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    errors: list[str] = []
+
+    if zipfile.is_zipfile(src):
+        try:
+            with zipfile.ZipFile(src) as zf:
+                zf.extractall(out_dir)
+            return out_dir, [p for p in out_dir.rglob("*") if p.is_file()]
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"zipfile: {exc}")
+
+    seven = find_7zip()
+    if seven is not None:
+        try:
+            proc = subprocess.run([str(seven), "x", "-y", f"-o{out_dir}", str(src)],
+                                  capture_output=True, timeout=180)
+            if proc.returncode == 0:
+                files = [p for p in out_dir.rglob("*") if p.is_file()]
+                if files:
+                    return out_dir, files
+            errors.append(f"7z rc={proc.returncode}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"7z: {exc}")
+
+    tar = find_bsdtar()
+    if tar is not None:
+        try:
+            proc = subprocess.run([str(tar), "-xf", str(src), "-C", str(out_dir)],
+                                  capture_output=True, timeout=180)
+            if proc.returncode == 0:
+                files = [p for p in out_dir.rglob("*") if p.is_file()]
+                if files:
+                    return out_dir, files
+            errors.append(f"bsdtar rc={proc.returncode}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"bsdtar: {exc}")
+
+    raise ValueError(
+        "Arşiv açılamadı (" + src.name + "). " + "; ".join(errors) +
+        "\nÇözüm: 7-Zip kurulu olsun (C:\\Program Files\\7-Zip\\7z.exe) "
+        "veya arşivi elle çıkarıp dosyayı doğrudan seç.")
+
+
+def _looks_like_dataset_xml(p: Path) -> bool:
+    if p.suffix.lower() not in (".odx-f", ".odx", ".xml"):
+        return False
+    try:
+        with p.open("rb") as fh:
+            head = fh.read(4096)
+            if b"DB_7100" in head or b"FLASHDATA" in head:
+                return True
+            fh.seek(0)
+            chunk = fh.read(2_000_000)
+            return b"DB_7100" in chunk
+    except OSError:
+        return False
+
+
+def pick_dataset_file(files: Iterable[Path]) -> tuple[Path | None, list[Path]]:
+    """Açılan arşivdeki dosyalardan veri setini seçer; (seçilen, adaylar)."""
+    files = [f for f in files if f.is_file()]
+    candidates: list[Path] = []
+    for f in files:
+        if _looks_like_dataset_xml(f):
+            candidates.append(f)
+    if not candidates:
+        for f in files:
+            if f.suffix.lower() == ".bin":
+                try:
+                    if f.stat().st_size == DATASET_SIZE:
+                        candidates.append(f)
+                except OSError:
+                    pass
+    if not candidates:
+        for f in files:
+            try:
+                if f.stat().st_size == DATASET_SIZE:
+                    candidates.append(f)
+            except OSError:
+                pass
+    if not candidates:
+        return None, files
+    # en büyük ODX önce, yoksa ilk .bin
+    candidates.sort(key=lambda p: (p.suffix.lower() != ".bin", -p.stat().st_size))
+    return candidates[0], candidates
 
 
 # --------------------------------------------------------------------------- #
@@ -189,6 +330,10 @@ class Dataset:
     method: int = 0x00              # dosyadaki sıkıştırma yöntemi
     block_name: str = DATASET_BLOCK_NAME
     part_number: str = ""
+    archive: Path | None = None     # arşivden geldiyse kaynak arşiv
+    archive_member: str = ""        # arşiv içindeki göreli yol
+    extract_dir: Path | None = None # arşivin açıldığı klasör
+    extracted: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -225,6 +370,31 @@ def _pick_dataset_block(root: ET.Element) -> tuple[ET.Element, ET.Element | None
 
 
 def load(path: str | Path) -> Dataset:
+    """Veri setini yükler; .zip/.7z/.rar arşivleri otomatik açılır."""
+    p = Path(path)
+    if is_archive(p):
+        extract_dir, files = extract_archive(p)
+        chosen, candidates = pick_dataset_file(files)
+        if chosen is None:
+            listing = ", ".join(f.name for f in files[:12]) or "(boş)"
+            raise ValueError(
+                f"{p.name} içinde 2Q0 veri seti bulunamadı.\n"
+                f"Arşivdeki dosyalar: {listing}\n"
+                "Aranan: DB_7100 içeren .odx-f/.xml veya 65536 baytlık .bin")
+        ds = _load_file(chosen)
+        ds.archive = p
+        ds.archive_member = str(chosen.relative_to(extract_dir))
+        ds.extract_dir = extract_dir
+        ds.extracted = files
+        if len(candidates) > 1:
+            others = ", ".join(c.name for c in candidates[1:4])
+            ds.warnings.append(f"Arşivde {len(candidates)} aday vardı, ilki seçildi ({chosen.name}). "
+                               f"Diğerleri: {others}")
+        return ds
+    return _load_file(p)
+
+
+def _load_file(path: str | Path) -> Dataset:
     p = Path(path)
     suffix = p.suffix.lower()
     if suffix == ".bin":
@@ -352,14 +522,8 @@ def _drop_dataset_security(xml_text: str) -> str:
     return block_re.sub(_clean_block, xml_text)
 
 
-def save(ds: Dataset, out_path: str | Path, new_raw: bytes, *, project: str | None = None) -> Path:
-    """Yeni veri setini yazar: .bin ise ham, .odx-f/.xml ise sıkıştırmasız ODX."""
-    out = Path(out_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    if ds.kind == "bin" or out.suffix.lower() == ".bin":
-        out.write_bytes(new_raw)
-        return out
-
+def _render_odx_text(ds: Dataset, new_raw: bytes) -> str:
+    """Veri setini ODX metnine gömer (sıkıştırmasız, dataset imzası kaldırılmış)."""
     if not ds.xml_text:
         raise ValueError("Kaynak ODX metni yok")
     root = ET.fromstring(ds.xml_text)
@@ -371,7 +535,6 @@ def save(ds: Dataset, out_path: str | Path, new_raw: bytes, *, project: str | No
     text = _set_method_no_compression(text, fd_id)
     text = _drop_compressed_size(text)
     text = _drop_dataset_security(text)
-    # sıkıştırma kaldırıldı: UNCOMPRESSED-SIZE = 65536 kalmalı
     text = re.sub(r"(<UNCOMPRESSED-SIZE>)(\d+)(</UNCOMPRESSED-SIZE>)",
                   lambda m: m.group(1) + str(len(new_raw)) + m.group(3), text, count=1)
 
@@ -381,14 +544,50 @@ def save(ds: Dataset, out_path: str | Path, new_raw: bytes, *, project: str | No
     payload = bytes.fromhex("".join((fd2.findtext("DATA") or "").split()))
     if payload != new_raw:
         raise RuntimeError("Yazılan ODX doğrulanamadı (DATA içeriği uyuşmuyor)")
+    return text
 
-    out.write_text(text, encoding="utf-8")
+
+def _save_archive(ds: Dataset, new_raw: bytes, out: Path) -> Path:
+    """Arşivden gelen veri setini, diğer dosyaları koruyarak yeni bir .zip'e yazar."""
+    if out.suffix.lower() != ".zip":
+        out = out.with_suffix(".zip")
+    if ds.extract_dir is None or not ds.extracted:
+        raise ValueError("Arşiv içeriği bellekte yok")
+    member = ds.archive_member or (ds.source.name if ds.source else "dataset.bin")
+    payload = (_render_odx_text(ds, new_raw).encode("utf-8") if ds.kind == "odx" else new_raw)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in ds.extracted:
+            try:
+                rel = str(f.relative_to(ds.extract_dir))
+            except ValueError:
+                continue
+            if rel.replace("\\", "/").lower() == member.replace("\\", "/").lower():
+                zf.writestr(rel, payload)
+            else:
+                zf.write(f, rel)
+    return out
+
+
+def save(ds: Dataset, out_path: str | Path, new_raw: bytes, *, project: str | None = None) -> Path:
+    """Yeni veri setini yazar: .bin → ham, ODX → sıkıştırmasız konteyner, arşiv → .zip."""
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if ds.archive is not None:
+        return _save_archive(ds, new_raw, out)
+    if ds.kind == "bin" or out.suffix.lower() == ".bin":
+        out.write_bytes(new_raw)
+        return out
+
+    out.write_text(_render_odx_text(ds, new_raw), encoding="utf-8")
     return out
 
 
 def summary(ds: Dataset) -> dict[str, object]:
+    kaynak = ds.source.name if ds.source else "—"
+    if ds.archive is not None:
+        kaynak = f"{ds.archive.name} → {ds.archive_member}"
     return {
-        "dosya": ds.source.name if ds.source else "—",
+        "dosya": kaynak,
         "tür": "ODX-F (konteyner)" if ds.kind == "odx" else "ham .bin",
         "boyut": len(ds.raw),
         "blok": ds.block_name,
@@ -398,6 +597,8 @@ def summary(ds: Dataset) -> dict[str, object]:
         "crc": f"0x{stored_crc(ds.raw):08X}",
         "crc_durum": "DOĞRU" if ds.crc_ok() else "HATALI",
         "imza": stored_signature(ds.raw).hex().upper(),
+        "arşiv": ds.archive.name if ds.archive else "—",
+        "arşiv_dosya": ds.archive_member or "—",
         "uyarılar": list(ds.warnings),
     }
 
